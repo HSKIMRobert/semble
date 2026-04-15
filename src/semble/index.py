@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 import os
+import subprocess
 import tempfile
 from pathlib import Path
 
 import bm25s
 import numpy as np
+from huggingface_hub import utils as hf_utils
 from model2vec import StaticModel
 from vicinity import Metric, Vicinity
 
@@ -127,6 +130,55 @@ class SembleIndex:
         instance.index(path, extensions=extensions, ignore=ignore, include_docs=include_docs)
         return instance
 
+    @classmethod
+    def from_git(
+        cls,
+        url: str,
+        ref: str | None = None,
+        model: Encoder | None = None,
+        extensions: frozenset[str] | None = None,
+        ignore: frozenset[str] | None = None,
+        include_docs: bool = False,
+        enable_caching: bool = True,
+        cache_dir: str | Path | None = None,
+        model_name: str | None = None,
+    ) -> SembleIndex:
+        """Clone a git repository and index it.
+
+        :param url: URL of the git repository to clone (any git provider).
+        :param ref: Branch or tag to check out. Defaults to the remote HEAD.
+        :param model: Embedding model to use. Defaults to potion-code-16M.
+        :param extensions: File extensions to include. Defaults to a standard set of code extensions.
+        :param ignore: Directory names to skip. Defaults to common VCS and build dirs.
+        :param include_docs: If True, also index documentation files (.md, .yaml, etc.).
+        :param enable_caching: Whether to persist embeddings to disk between runs.
+        :param cache_dir: Override the cache directory. Defaults to ~/.cache/semble.
+        :param model_name: Stable identifier for a custom encoder, used as the disk cache namespace.
+        :return: An indexed SembleIndex. Chunk file paths are repo-relative (e.g. ``src/foo.py``).
+        :raises RuntimeError: If git is not on PATH or the clone fails.
+        """
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            cmd = ["git", "clone", "--depth", "1", *(["--branch", ref] if ref else []), url, tmp_dir]
+            try:
+                result = subprocess.run(cmd, capture_output=True, text=True)
+            except FileNotFoundError:
+                raise RuntimeError("git is not installed or not on PATH") from None
+            if result.returncode != 0:
+                raise RuntimeError(f"git clone failed for {url!r}:\n{result.stderr.strip()}")
+            instance = cls.from_path(
+                tmp_dir,
+                model=model,
+                extensions=extensions,
+                ignore=ignore,
+                include_docs=include_docs,
+                enable_caching=enable_caching,
+                cache_dir=cache_dir,
+                model_name=model_name,
+            )
+            # Remap to relative paths and resolve to handle OS-level symlinks.
+            instance._remap_to_relative(Path(tmp_dir).resolve())
+            return instance
+
     def index(
         self,
         path: str | Path,
@@ -185,7 +237,11 @@ class SembleIndex:
     def find_related(self, file_path: str, line: int, top_k: int = 5) -> list[SearchResult]:
         """Return chunks semantically similar to the chunk at the given file location.
 
-        :param file_path: Absolute path to the file.
+        :param file_path: Path to the file, in the same format stored by the index.
+            For indexes built with `from_path` this is an absolute path; for
+            indexes built with `from_git` this is a repo-relative path
+            (e.g. ``src/foo.py``).  Use `chunk.file_path` from a prior search result
+            to guarantee the correct format.
         :param line: Line number (1-indexed) used to identify the source chunk.
         :param top_k: Number of similar chunks to return.
         :return: Ranked list of SearchResult objects, most similar first.
@@ -212,7 +268,9 @@ class SembleIndex:
         :param query: Natural-language or keyword query string.
         :param top_k: Maximum number of results to return.
         :param mode: Search strategy — "hybrid" (default), "semantic", or "bm25".
-        :param alpha: Blend weight for hybrid score combination; 1.0 = full semantic weight, 0.0 = full BM25 weight. File-path penalties and diversity reranking are applied regardless. None = auto-detect from query type.
+        :param alpha: Blend weight for hybrid score combination; 1.0 = full semantic
+            weight, 0.0 = full BM25 weight. File-path penalties and diversity reranking
+            are applied regardless. ``None`` auto-detects from query type.
         :return: Ranked list of :class:`SearchResult` objects, best match first.
         :raises ValueError: If `mode` is not a recognised search strategy.
         """
@@ -233,15 +291,16 @@ class SembleIndex:
     def _ensure_model(self) -> Encoder:
         """Return the current model, loading the default if none was provided."""
         if self.model is None:
-            self.model = StaticModel.from_pretrained(DEFAULT_MODEL_NAME)
+            # Disable HF progress bars since the model is loaded silently in the background during indexing.
+            hf_utils.disable_progress_bars()
+            try:
+                self.model = StaticModel.from_pretrained(DEFAULT_MODEL_NAME)
+            finally:
+                hf_utils.enable_progress_bars()
         return self.model
 
     def _embed_chunks(self, chunks: list[Chunk]) -> EmbeddingMatrix:
-        """Embed chunks, consulting memory then disk before calling the model.
-
-        Lookup order: in-memory cache → disk cache → encode. The model is loaded
-        (or downloaded) only when there are genuine cache misses.
-        """
+        """Embed chunks, consulting memory then disk before calling the model."""
         if not chunks:
             return np.empty((0, 256), dtype=np.float32)
 
@@ -261,6 +320,23 @@ class SembleIndex:
                 cache.put(chunks[i].content_hash, embedding)
 
         return np.array([self._embedding_cache[chunk.content_hash] for chunk in chunks], dtype=np.float32)
+
+    def _remap_to_relative(self, tmp_root: Path) -> None:
+        """Rewrite chunk file_paths from absolute temp-dir paths to repo-relative paths.
+
+        :param tmp_root: Resolved absolute path to the cloned repo root.
+        """
+        remapped = [
+            dataclasses.replace(chunk, file_path=str(Path(chunk.file_path).relative_to(tmp_root)))
+            for chunk in self.chunks
+        ]
+        self.chunks = remapped
+        # No meaningful local root once paths are repo-relative.
+        self._index_root = None
+        if self._semantic_index is not None:
+            # file_path only changed: read from cache.
+            embeddings = np.array([self._embedding_cache[c.content_hash] for c in remapped], dtype=np.float32)
+            self._semantic_index = Vicinity.from_vectors_and_items(embeddings, remapped, metric=Metric.COSINE)
 
     def _enrich_for_bm25(self, chunk: Chunk, root: Path | None) -> str:
         """Append file path components to BM25 content to boost path-based queries.
