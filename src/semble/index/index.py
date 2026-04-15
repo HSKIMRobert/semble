@@ -105,7 +105,7 @@ class SembleIndex:
         with tempfile.TemporaryDirectory() as tmp_dir:
             cmd = ["git", "clone", "--depth", "1", *(["--branch", ref] if ref else []), url, tmp_dir]
             try:
-                result = subprocess.run(cmd, capture_output=True, text=True)
+                result = subprocess.run(cmd, capture_output=True, text=True, stdin=subprocess.DEVNULL)
             except FileNotFoundError:
                 raise RuntimeError("git is not installed or not on PATH") from None
             if result.returncode != 0:
@@ -118,6 +118,7 @@ class SembleIndex:
                 extensions=extensions,
                 ignore=ignore,
                 include_docs=include_docs,
+                display_root=resolved_path,
             )
 
             index = SembleIndex(model, bm25, vicinity, chunks, resolved_path)
