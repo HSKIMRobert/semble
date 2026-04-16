@@ -3,7 +3,7 @@ from pathlib import Path
 
 from chonkie.chunker import CodeChunker
 
-from semble.file_walker import language_for_path
+from semble.index.file_walker import language_for_path
 from semble.types import Chunk
 
 logger = logging.getLogger(__name__)

@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from semble.chunker import _chunk_with_chonkie, chunk_file, chunk_lines
+from semble.index.chunker import _chunk_with_chonkie, chunk_file, chunk_lines
 
 
 def test_chunk_lines_basic(tmp_path: Path) -> None:

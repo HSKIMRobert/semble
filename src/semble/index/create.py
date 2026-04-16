@@ -4,9 +4,9 @@ from pathlib import Path
 import bm25s
 from vicinity import Metric, Vicinity
 
-from semble.chunker import chunk_source
-from semble.file_walker import filter_extensions, language_for_path, walk_files
+from semble.index.chunker import chunk_source
 from semble.index.dense import embed_chunks
+from semble.index.file_walker import filter_extensions, language_for_path, walk_files
 from semble.index.sparse import enrich_for_bm25
 from semble.tokens import tokenize
 from semble.types import Chunk, Encoder
