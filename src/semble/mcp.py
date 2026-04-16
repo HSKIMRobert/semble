@@ -162,3 +162,22 @@ def _format_results(header: str, results: list[SearchResult]) -> str:
         lines.append("```")
         lines.append("")
     return "\n".join(lines)
+
+
+def main() -> None:
+    """Entry point for the semble command-line tool."""
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        prog="semble",
+        description="Instant local code search for agents.",
+    )
+    parser.add_argument(
+        "path",
+        nargs="?",
+        default=None,
+        help="Local directory or git URL to pre-index at startup (optional).",
+    )
+    parser.add_argument("--ref", default=None, help="Branch or tag to check out (git URLs only).")
+    args = parser.parse_args()
+    asyncio.run(serve(args.path, ref=args.ref))
