@@ -11,7 +11,6 @@ from bm25s import BM25
 
 from semble.index.create import create_index_from_path
 from semble.index.dense import SelectableBasicBackend, load_model
-from semble.index.sparse import selector_to_mask
 from semble.search import search_bm25, search_hybrid, search_semantic
 from semble.types import Chunk, Encoder, IndexStats, SearchMode, SearchResult
 
@@ -25,7 +24,6 @@ class SembleIndex:
         bm25_index: BM25,
         semantic_index: SelectableBasicBackend,
         chunks: list[Chunk],
-        index_root: Path,
     ) -> None:
         """Configure the index.
 
@@ -33,13 +31,11 @@ class SembleIndex:
         :param bm25_index: The bm25 index.
         :param semantic_index: The semantic index.
         :param chunks: The found chunks.
-        :param index_root: The root of the index.
         """
         self.model: Encoder = model
         self.chunks: list[Chunk] = chunks
         self._bm25_index: BM25 = bm25_index
         self._semantic_index: SelectableBasicBackend = semantic_index
-        self._index_root: Path = index_root
         self.file_mapping, self.language_mapping = self._populate_mapping()
 
     def _populate_mapping(self) -> tuple[dict[str, list[int]], dict[str, list[int]]]:
@@ -84,15 +80,23 @@ class SembleIndex:
         :param extensions: File extensions to include. Defaults to a standard set of code extensions.
         :param ignore: Directory names to skip. Defaults to common VCS and build dirs.
         :param include_docs: If True, also index documentation files (.md, .yaml, etc.).
-        :return: An indexed SembleIndex.
+        :return: An indexed SembleIndex. Chunk file paths are relative to ``path``.
+        :raises FileNotFoundError: If `path` does not exist.
+        :raises NotADirectoryError: If `path` exists but is not a directory.
+        :raises ValueError: If `path` is a directory but contains no supported files.
         """
         model = model or load_model()
         path = Path(path)
+        if not path.exists():
+            raise FileNotFoundError(f"Path does not exist: {path}")
+        if not path.is_dir():
+            raise NotADirectoryError(f"Path is not a directory: {path}")
+        path = path.resolve()
         bm25, vicinity, chunks = create_index_from_path(
-            path, model=model, extensions=extensions, ignore=ignore, include_docs=include_docs
+            path, model=model, extensions=extensions, ignore=ignore, include_docs=include_docs, display_root=path
         )
 
-        index = SembleIndex(model, bm25, vicinity, chunks, path)
+        index = SembleIndex(model, bm25, vicinity, chunks)
 
         return index
 
@@ -118,7 +122,8 @@ class SembleIndex:
         :raises RuntimeError: If git is not on PATH or the clone fails.
         """
         with tempfile.TemporaryDirectory() as tmp_dir:
-            cmd = ["git", "clone", "--depth", "1", *(["--branch", ref] if ref else []), url, tmp_dir]
+            # `--` prevents `url` from being interpreted as a git option (e.g. `--upload-pack=...`).
+            cmd = ["git", "clone", "--depth", "1", *(["--branch", ref] if ref else []), "--", url, tmp_dir]
             try:
                 result = subprocess.run(cmd, capture_output=True, text=True, stdin=subprocess.DEVNULL)
             except FileNotFoundError:
@@ -136,7 +141,7 @@ class SembleIndex:
                 display_root=resolved_path,
             )
 
-            index = SembleIndex(model, bm25, vicinity, chunks, resolved_path)
+            index = SembleIndex(model, bm25, vicinity, chunks)
 
             return index
 
@@ -144,8 +149,7 @@ class SembleIndex:
         """Return chunks semantically similar to the chunk at the given file location.
 
         :param file_path: Path to the file, in the same format stored by the index.
-            For indexes built with `from_path` this is an absolute path; for
-            indexes built with `from_git` this is a repo-relative path
+            For both `from_path` and `from_git` this is a repo-relative path
             (e.g. ``src/foo.py``).  Use `chunk.file_path` from a prior search result
             to guarantee the correct format.
         :param line: Line number (1-indexed) used to identify the source chunk.
