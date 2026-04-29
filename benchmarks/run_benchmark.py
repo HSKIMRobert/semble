@@ -1,5 +1,4 @@
 import argparse
-import json
 import sys
 import time
 from collections import defaultdict
@@ -54,7 +53,7 @@ def _evaluate(
 
     for task in tasks:
         query_latencies: list[float] = []
-        results: list[SearchResult]
+        results: list[SearchResult] = []
         for _ in range(_LATENCY_RUNS):
             started = time.perf_counter()
             results = index.search(task.query, top_k=_DIRECT_TOP_K)
