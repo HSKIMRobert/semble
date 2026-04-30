@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import re
 from pathlib import Path
 from typing import Annotated, Literal
 
@@ -10,17 +9,14 @@ from pydantic import Field
 
 from semble.index import SembleIndex
 from semble.index.dense import load_model
-from semble.types import Chunk, Encoder, SearchResult
+from semble.types import Encoder
+from semble.utils import _format_results, _is_git_url, _resolve_chunk
 
 _REPO_DESCRIPTION = (
     "Git URL (e.g. https://github.com/org/repo) or local path to index and search. "
     "Required when no default index was configured at startup. "
     "The index is cached after the first call, so repeat queries are fast."
 )
-
-_GIT_URL_SCHEMES = ("https://", "http://", "ssh://", "git://", "git+ssh://", "file://")
-# scp-like syntax: [user@]host:path, where host has no '/' before the ':'.
-_SCP_GIT_URL_RE = re.compile(r"^[\w.-]+@[\w.-]+:(?!/)")
 
 
 def create_server(cache: _IndexCache, default_source: str | None = None) -> FastMCP:
@@ -142,8 +138,6 @@ class _IndexCache:
         try:
             return await asyncio.shield(task)
         except asyncio.CancelledError:  # pragma: no cover
-            # If this waiter was cancelled but the task is still running, preserve it for
-            # other waiters. Only evict if the task itself was cancelled.
             if task.done():
                 self._tasks.pop(cache_key, None)
             raise
@@ -151,61 +145,3 @@ class _IndexCache:
             # Build failed: evict so the next caller can retry.
             self._tasks.pop(cache_key, None)
             raise
-
-
-def _resolve_chunk(chunks: list[Chunk], file_path: str, line: int) -> Chunk | None:
-    """Return the chunk that contains *line* in *file_path*, or None.
-
-    MCP tool arguments are JSON primitives (strings and ints), so the agent
-    passes file_path + line rather than a Chunk object. This function
-    reconstructs the Chunk at the MCP boundary before calling into the library.
-
-    :param chunks: All indexed chunks to search.
-    :param file_path: File path as stored in the index.
-    :param line: 1-indexed line number to resolve.
-    :return: The best-matching Chunk, or None if not found.
-    """
-    fallback = None
-    for chunk in chunks:
-        if chunk.file_path == file_path and chunk.start_line <= line <= chunk.end_line:
-            if line < chunk.end_line:
-                return chunk
-            if fallback is None:  # line == end_line: boundary; keep as fallback for end-of-file chunks
-                fallback = chunk
-    return fallback
-
-
-def _is_git_url(path: str) -> bool:
-    """Return True if path looks like a remote git URL rather than a local path."""
-    return path.startswith(_GIT_URL_SCHEMES) or _SCP_GIT_URL_RE.match(path) is not None
-
-
-def _format_results(header: str, results: list[SearchResult]) -> str:
-    """Render SearchResult objects as numbered, fenced code blocks."""
-    lines: list[str] = [header, ""]
-    for i, r in enumerate(results, 1):
-        lines.append(f"## {i}. {r.chunk.location}  [score={r.score:.3f}]")
-        lines.append("```")
-        lines.append(r.chunk.content.strip())
-        lines.append("```")
-        lines.append("")
-    return "\n".join(lines)
-
-
-def main() -> None:
-    """Entry point for the semble command-line tool."""
-    import argparse
-
-    parser = argparse.ArgumentParser(
-        prog="semble",
-        description="Instant local code search for agents.",
-    )
-    parser.add_argument(
-        "path",
-        nargs="?",
-        default=None,
-        help="Local directory or git URL to pre-index at startup (optional).",
-    )
-    parser.add_argument("--ref", default=None, help="Branch or tag to check out (git URLs only).")
-    args = parser.parse_args()
-    asyncio.run(serve(args.path, ref=args.ref))

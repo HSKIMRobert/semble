@@ -1,12 +1,12 @@
-import sys
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from semble.mcp import _format_results, _IndexCache, _is_git_url, _resolve_chunk, create_server, main, serve
+from semble.mcp import _IndexCache, create_server, serve
 from semble.types import Chunk, Encoder, SearchMode, SearchResult
+from semble.utils import _format_results, _is_git_url, _resolve_chunk
 from tests.conftest import make_chunk
 
 
@@ -252,20 +252,4 @@ async def test_serve_runs_stdio(tmp_path: Path, with_path: bool) -> None:
     ):
         await (serve(str(tmp_path)) if with_path else serve())
 
-    mock_run.assert_called_once()
-
-
-@pytest.mark.parametrize(
-    "argv",
-    [
-        ["semble", "/some/path", "--ref", "main"],
-        ["semble"],
-    ],
-)
-def test_main_calls_asyncio_run(argv: list[str], monkeypatch: pytest.MonkeyPatch) -> None:
-    """main() parses argv and delegates to asyncio.run(serve(...))."""
-    monkeypatch.setattr(sys, "argv", argv)
-    with patch("semble.mcp.asyncio.run") as mock_run:
-        mock_run.side_effect = lambda coro: coro.close()
-        main()
     mock_run.assert_called_once()

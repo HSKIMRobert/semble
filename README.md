@@ -19,6 +19,7 @@
 [Quickstart](#quickstart) •
 [Main Features](#main-features) •
 [MCP Server](#mcp-server) •
+[CLI](#cli) •
 [How it works](#how-it-works) •
 [Benchmarks](#benchmarks)
 
@@ -118,6 +119,73 @@ Add to `~/.cursor/mcp.json` (or `.cursor/mcp.json` in your project):
 |------|-------------|
 | `search` | Search a codebase with a natural-language or code query. Pass `repo` as a git URL or local path. |
 | `find_related` | Given a file path and line number, return chunks semantically similar to the code at that location. |
+
+### Sub-agent support
+
+Claude Code and Codex CLI lazy-load MCP tool schemas, so sub-agents cannot call `mcp__semble__search` directly. The fix is to invoke semble through the [CLI](#cli) via Bash instead.
+
+**Claude Code**: run this once in your project root:
+
+```bash
+semble init
+# or, if semble is not on $PATH:
+uvx --from "semble[mcp]" semble init
+```
+
+This writes [`.claude/agents/semble-search.md`](src/semble/agents/semble-search.md).
+
+**Other tools (Codex, etc.)**: append the following to your `AGENTS.md`:
+
+```markdown
+## Code Search
+
+Use `semble search` to find code by describing what it does or naming a symbol/identifier, instead of grep:
+
+​```bash
+semble search "authentication flow" ./my-project
+semble search "save_pretrained" ./my-project
+semble search "save model to disk" ./my-project --top-k 10
+​```
+
+Use `semble find-related` to discover code similar to a known location (pass `file_path` and `line` from a prior search result):
+
+​```bash
+semble find-related src/auth.py 42 ./my-project
+​```
+
+`path` defaults to the current directory when omitted; git URLs are accepted.
+
+If `semble` is not on `$PATH`, use `uvx --from "semble[mcp]" semble` in its place.
+
+## Workflow
+
+1. Start with `semble search` to find relevant chunks.
+2. Inspect full files only when the returned chunk is not enough context.
+3. Optionally use `semble find-related` with a promising result's `file_path` and `line` to discover related implementations.
+4. Use grep only when you need exhaustive literal matches or quick confirmation of an exact string.
+```
+
+## CLI
+
+Semble also ships as a standalone CLI for use outside of MCP. This is useful in scripts, sub-agents, or anywhere you want search results without an MCP session.
+
+```bash
+# Search a local repo
+semble search "authentication flow" ./my-project
+
+# Search for a symbol or identifier
+semble search "save_pretrained" ./my-project
+
+# Search a remote repo (cloned on demand)
+semble search "save model to disk" https://github.com/MinishLab/model2vec
+
+# Find code similar to a known location (file_path and line from a prior search result)
+semble find-related src/auth.py 42 ./my-project
+```
+
+`path` defaults to the current directory when omitted; git URLs are accepted.
+
+If `semble` is not on `$PATH`, use `uvx --from "semble[mcp]" semble` in its place.
 
 ## How it works
 
