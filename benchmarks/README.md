@@ -3,6 +3,7 @@
 Quality and speed benchmarks for `semble`.
 
 - [Main results](#main-results)
+- [Token efficiency](#token-efficiency)
 - [By language](#by-language)
 - [Ablations](#ablations)
 - [Dataset](#dataset)
@@ -32,6 +33,37 @@ Quality and speed across all methods.
 The 137M-param CodeRankEmbed Hybrid wins NDCG@10 by 0.008. semble wins index time by 218x and query latency by 11x.
 
 NDCG@10 is averaged across all queries. Speed numbers use one repo per language, CPU only: cold-start index time and warm query p50 (median across 5 consecutive runs).
+
+## Token efficiency
+
+Coding agents (Claude Code, OpenCode, etc.) typically find code by running `grep` on keywords and reading the matched files. We model that workflow and compare it against semble's chunk retrieval across our full benchmark of 1251 queries.
+
+![Token efficiency: recall vs. retrieved tokens](../assets/images/token_efficiency.png)
+
+### Expected tokens per query
+
+For each query: tokens consumed at first relevant hit, or 32k if the method never finds anything. Averaged across all 1251 queries.
+
+| Method | Expected tokens | Savings |
+|---|---:|---:|
+| ripgrep + read file | 45,692 | baseline |
+| **semble** | **566** | **98% fewer** |
+
+### Recall at fixed token budgets
+
+A relevant file is "covered" once any retrieved unit comes from it.
+
+| Method | 500 | 1k | 2k | 4k | 8k | 16k | 32k |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| **semble** | **0.685** | **0.849** | **0.938** | **0.976** | **0.991** | **0.996** | **0.996** |
+| ripgrep + read file | 0.001 | 0.008 | 0.037 | 0.088 | 0.212 | 0.379 | 0.583 |
+
+<details>
+<summary>Methodology</summary>
+
+semble returns the top-50 ranked chunks. `ripgrep+read` splits the query into keywords (dropping stopwords and short words), runs `rg --fixed-strings --ignore-case` for each keyword, then reads matched files in full ranked by how many distinct keywords they contain. Both methods search the same set of file types and ignored directories. Tokens are counted with `cl100k_base` via `tiktoken`. A relevant file is "covered" once any retrieved unit overlaps its annotated span.
+
+</details>
 
 ## By language
 
@@ -235,6 +267,24 @@ Requires the `benchmark` extra (`uv sync --extra benchmark`).
 uv run python -m benchmarks.baselines.coderankembed
 uv run python -m benchmarks.baselines.coderankembed --mode semantic
 ```
+
+</details>
+
+<details>
+<summary>Context-efficiency benchmark</summary>
+
+Requires the `benchmark` extra (`uv sync --extra benchmark`) and `rg` on `$PATH`.
+
+```bash
+# Recall vs. token-budget across all queries; plots automatically.
+uv run python -m benchmarks.token_efficiency recall
+uv run python -m benchmarks.token_efficiency recall --repo fastapi
+
+# Regenerate the plot from a saved recall payload.
+uv run python -m benchmarks.token_efficiency plot
+```
+
+Writes `benchmarks/results/token-efficiency-<sha12>.json` and `assets/images/token_efficiency.png`.
 
 </details>
 
