@@ -18,15 +18,20 @@
 
 [Quickstart](#quickstart) •
 [MCP Server](#mcp-server) •
+[Bash / AGENTS.md](#bash-integration) •
 [CLI](#cli) •
 [Python API](#python-api) •
 [Benchmarks](#benchmarks)
 
 </div>
 
-Semble is a code search library built for agents. It returns the exact code snippets they need instantly, using ~98% fewer tokens than grep+read and cutting latency on every step. Indexing and searching a full codebase end-to-end takes under a second, with ~200x faster indexing and ~10x faster queries than a code-specialized transformer, at 99% of its retrieval quality (see [benchmarks](#benchmarks)). Everything runs on CPU with no API keys, GPU, or external services. Run it as an [MCP server](#mcp-server) and any agent (Claude Code, Cursor, Codex, OpenCode, etc.) gets instant access to any repo, cloned and indexed on demand.
+Semble is a code search library built for agents. It returns the exact code snippets they need instantly, using ~98% fewer tokens than grep+read and cutting latency on every step. Indexing and searching a full codebase end-to-end takes under a second, with ~200x faster indexing and ~10x faster queries than a code-specialized transformer, at 99% of its retrieval quality (see [benchmarks](#benchmarks)). Everything runs on CPU with no API keys, GPU, or external services. Run it as an [MCP server](#mcp-server) or call it from the shell via [AGENTS.md](#bash-integration) and any agent (Claude Code, Cursor, Codex, OpenCode, etc.) gets instant access to any repo.
 
 ## Quickstart
+
+Your agent will automatically use Semble whenever it needs to find code. Instead of grepping with a keyword and reading full files, it queries in natural language (e.g. `"How is authentication handled?"`) and gets back only the relevant context. Semble can be set up as an MCP server or as a bash tool:
+
+### MCP
 
 Add Semble to Claude Code (requires [uv](https://docs.astral.sh/uv/getting-started/installation/)):
 
@@ -34,9 +39,20 @@ Add Semble to Claude Code (requires [uv](https://docs.astral.sh/uv/getting-start
 claude mcp add semble -s user -- uvx --from "semble[mcp]" semble
 ```
 
-Once added, your agent will automatically use Semble whenever it needs to find relevant code. Instead of having to use grep with a keyword (e.g. `"authentication"`) and reading full files, it can query in natural language (e.g. `"How is authentication handled?"`) and immediately get back only the relevant context.
+Using another agent harness? See [MCP Server](#mcp-server) for setup instructions for Codex, OpenCode, Cursor, and other MCP clients.
 
-Using another agent harness? See [MCP Server](#mcp-server) for setup instructions for Codex, OpenCode, Cursor, and other MCP clients. To update Semble, see [Updating](#updating).
+### Bash / AGENTS.md
+
+Install Semble first, then add the [code search snippet](#bash-integration) to your `AGENTS.md` or `CLAUDE.md`:
+
+```bash
+pip install semble  # Install with pip
+uv add semble       # Or install with uv
+```
+
+> Note: for Claude Code or Codex CLI sub-agents, use the [bash integration](#bash-integration) instead of, or alongside, MCP.
+
+To update Semble, see [Updating](#updating).
 
 ## Main Features
 
@@ -101,21 +117,12 @@ Add to `~/.cursor/mcp.json` (or `.cursor/mcp.json` in your project):
 | `search` | Search a codebase with a natural-language or code query. Pass `repo` as a git URL or local path. |
 | `find_related` | Given a file path and line number, return chunks semantically similar to the code at that location. |
 
-### Sub-agent support
 
-Claude Code and Codex CLI lazy-load MCP tool schemas, so sub-agents cannot call `mcp__semble__search` directly. The fix is to invoke semble through the [CLI](#cli) via Bash instead.
+## Bash integration
 
-**Claude Code**: run this once in your project root:
+An alternative to MCP is to invoke Semble via Bash. For Claude Code and Codex CLI, this is the only option for sub-agents, which cannot call MCP tools directly (both lazy-load MCP schemas at the top-level agent only).
 
-```bash
-semble init
-# or, if semble is not on $PATH:
-uvx --from "semble[mcp]" semble init
-```
-
-This writes [`.claude/agents/semble-search.md`](src/semble/agents/semble-search.md).
-
-**Other tools (Codex, etc.)**: append the following to your `AGENTS.md`:
+To add Bash support, append the following to your `AGENTS.md` or `CLAUDE.md`:
 
 ```markdown
 ## Code Search
@@ -146,17 +153,19 @@ If `semble` is not on `$PATH`, use `uvx --from "semble[mcp]" semble` in its plac
 4. Use grep only when you need exhaustive literal matches or quick confirmation of an exact string.
 ```
 
-## CLI
-
-Install Semble:
+**Claude Code sub-agent**: Claude Code also supports a dedicated sub-agent. Run this once in your project root:
 
 ```bash
-pip install semble  # Install with pip
-uv add semble       # Install with uv
+semble init
+# or, if semble is not on $PATH:
+uvx --from "semble[mcp]" semble init
 ```
 
+This writes [`.claude/agents/semble-search.md`](src/semble/agents/semble-search.md).
 
-Semble also ships as a standalone CLI for use outside of MCP. This is useful in scripts, sub-agents, or anywhere you want search results without an MCP session.
+## CLI
+
+Semble also ships as a standalone CLI for use outside of MCP. This is useful in scripts or anywhere you want search results without an MCP session.
 
 ```bash
 # Search a local repo
