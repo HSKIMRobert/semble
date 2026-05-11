@@ -13,7 +13,8 @@ from bm25s import BM25
 from semble.index.create import create_index_from_path
 from semble.index.dense import SelectableBasicBackend, load_model
 from semble.search import search_bm25, search_hybrid, search_semantic
-from semble.types import Chunk, Encoder, IndexStats, SearchMode, SearchResult
+from semble.stats import save_search_stats
+from semble.types import CallType, Chunk, Encoder, IndexStats, SearchMode, SearchResult
 
 _GIT_CLONE_TIMEOUT = int(os.environ.get("SEMBLE_CLONE_TIMEOUT", 60))
 
@@ -27,18 +28,22 @@ class SembleIndex:
         bm25_index: BM25,
         semantic_index: SelectableBasicBackend,
         chunks: list[Chunk],
+        root: Path | None = None,
     ) -> None:
-        """Internal constructor — use :meth:`from_path` or :meth:`from_git`.
+        """Initialize a SembleIndex. Should be created with from_path or from_git.
 
         :param model: Embedding model to use.
         :param bm25_index: The bm25 index.
         :param semantic_index: The semantic index.
         :param chunks: The found chunks.
+        :param root: Root directory used to read file sizes for token-savings stats.
         """
         self.model: Encoder = model
         self.chunks: list[Chunk] = chunks
         self._bm25_index: BM25 = bm25_index
         self._semantic_index: SelectableBasicBackend = semantic_index
+        self._root: Path | None = root
+        self._file_sizes: dict[str, int] = self._compute_file_sizes(root) if root else {}
         self._file_mapping, self._language_mapping = self._populate_mapping()
 
     def _populate_mapping(self) -> tuple[dict[str, list[int]], dict[str, list[int]]]:
@@ -52,6 +57,18 @@ class SembleIndex:
             file_to_id[chunk.file_path].append(i)
 
         return dict(file_to_id), dict(language_to_id)
+
+    def _compute_file_sizes(self, root: Path) -> dict[str, int]:
+        """Return a mapping of repo-relative file path to total character count."""
+        sizes: dict[str, int] = {}
+        for chunk in self.chunks:
+            if chunk.file_path in sizes:
+                continue
+            try:
+                sizes[chunk.file_path] = len((root / chunk.file_path).read_text(encoding="utf-8", errors="replace"))
+            except OSError:
+                pass
+        return sizes
 
     @property
     def stats(self) -> IndexStats:
@@ -103,9 +120,7 @@ class SembleIndex:
             display_root=path,
         )
 
-        index = SembleIndex(model, bm25, vicinity, chunks)
-
-        return index
+        return SembleIndex(model, bm25, vicinity, chunks, root=path)
 
     @classmethod
     def from_git(
@@ -157,9 +172,7 @@ class SembleIndex:
                 display_root=resolved_path,
             )
 
-            index = SembleIndex(model, bm25, vicinity, chunks)
-
-            return index
+            return SembleIndex(model, bm25, vicinity, chunks, root=resolved_path)
 
     def find_related(self, source: Chunk | SearchResult, *, top_k: int = 5) -> list[SearchResult]:
         """Return chunks semantically similar to the given chunk or search result.
@@ -171,7 +184,9 @@ class SembleIndex:
         target = source.chunk if isinstance(source, SearchResult) else source
         selector = self._get_selector_vector(filter_languages=[target.language]) if target.language else None
         results = search_semantic(target.content, self.model, self._semantic_index, self.chunks, top_k + 1, selector)
-        return [r for r in results if r.chunk != target][:top_k]
+        results = [r for r in results if r.chunk != target][:top_k]
+        save_search_stats(results, CallType.FIND_RELATED, self._file_sizes)
+        return results
 
     def _get_selector_vector(
         self, filter_languages: list[str] | None = None, filter_paths: list[str] | None = None
@@ -216,11 +231,14 @@ class SembleIndex:
         selector = self._get_selector_vector(filter_languages, filter_paths)
 
         if mode == SearchMode.BM25:
-            return search_bm25(query, bm25_index, self.chunks, top_k, selector=selector)
-        if mode == SearchMode.SEMANTIC:
-            return search_semantic(query, self.model, semantic_index, self.chunks, top_k, selector=selector)
-        if mode == SearchMode.HYBRID:
-            return search_hybrid(
+            results = search_bm25(query, bm25_index, self.chunks, top_k, selector=selector)
+        elif mode == SearchMode.SEMANTIC:
+            results = search_semantic(query, self.model, semantic_index, self.chunks, top_k, selector=selector)
+        elif mode == SearchMode.HYBRID:
+            results = search_hybrid(
                 query, self.model, semantic_index, bm25_index, self.chunks, top_k, alpha=alpha, selector=selector
             )
-        raise ValueError(f"Unknown search mode: {mode!r}")
+        else:
+            raise ValueError(f"Unknown search mode: {mode!r}")
+        save_search_stats(results, CallType.SEARCH, self._file_sizes)
+        return results

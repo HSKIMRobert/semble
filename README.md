@@ -54,6 +54,8 @@ uv add semble       # Or install with uv
 
 To update Semble, see [Updating](#updating).
 
+Curious how many tokens Semble has saved you? Run `semble savings` to see. See [Savings](#savings) for details.
+
 ## Main Features
 
 - **Fast**: indexes an average repo in ~250 ms and answers queries in ~1.5 ms, all on CPU.
@@ -184,6 +186,29 @@ semble find-related src/auth.py 42 ./my-project
 `path` defaults to the current directory when omitted; git URLs are accepted.
 
 If `semble` is not on `$PATH`, use `uvx --from "semble[mcp]" semble` in its place.
+
+### Savings
+
+`semble savings` shows how many tokens semble has saved across all your searches:
+
+```bash
+semble savings           # summary by period
+semble savings --verbose # also show breakdown by call type
+```
+
+```
+  Semble Token Savings
+  ════════════════════════════════════════════════════════════════
+  Period        Calls   Savings
+  ────────────────────────────────────────────────────────────────
+  Today         42      [███████████████░]  ~58.4k tokens (95%)
+  Last 7 days   287     [██████████████░░]  ~312.4k tokens (90%)
+  All time      1.4k    [██████████████░░]  ~1.2M tokens (89%)
+```
+
+**How savings are calculated:** for each call, semble records the total character count of the unique files containing returned chunks and the character count of the snippets returned. Estimated tokens saved is `(file chars − snippet chars) / 4` (4 chars per token). This is a conservative estimate: the baseline is reading matched files in full, which is how coding agents often explore unfamiliar code.
+
+Stats are stored in `~/.semble/savings.jsonl`.
 
 ### Updating
 

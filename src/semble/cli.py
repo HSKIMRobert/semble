@@ -8,10 +8,11 @@ from pathlib import Path
 from model2vec.utils import get_package_extras
 
 from semble.index import SembleIndex
+from semble.stats import format_savings_report
 from semble.utils import _format_results, _is_git_url, _resolve_chunk
 
 _CLAUDE_FILE_PATH = Path(".claude") / "agents" / "semble-search.md"
-_CLI_DISPATCH_ARGS = frozenset({"search", "find-related", "init", "-h", "--help"})
+_CLI_DISPATCH_ARGS = frozenset({"search", "find-related", "init", "savings", "-h", "--help"})
 
 
 def main() -> None:
@@ -91,10 +92,17 @@ def _cli_main() -> None:
     init_p = sub.add_parser("init", help="Write .claude/agents/semble-search.md for Claude Code sub-agent support.")
     init_p.add_argument("--force", action="store_true", help="Overwrite if the file already exists.")
 
+    savings_p = sub.add_parser("savings", help="Show token savings and usage stats.")
+    savings_p.add_argument("--verbose", action="store_true", help="Also show usage breakdown by call type.")
+
     args = parser.parse_args()
 
     if args.command == "init":
         _run_init(force=args.force)
+        return
+
+    if args.command == "savings":
+        print(format_savings_report(verbose=args.verbose), end="")
         return
 
     include_text = args.include_text_files
